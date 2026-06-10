@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Weather Dashboard</title>
+
+<!-- Leaflet Map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<!-- Custom CSS -->
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<!-- ================= HEADER ================= -->
+<section class="hero">
+  <h1>🌦️ Weather Dashboard</h1>
+  <p>Live conditions • Spatial insights</p>
+  <button class="dark-toggle" onclick="toggleDark()">🌙</button>
+</section>
+
+<!-- ================= MAIN ================= -->
+<div class="container main">
+
+  <!-- SEARCH -->
+  <div class="search-box">
+    <input id="cityInput" placeholder="Enter city name (e.g. Bengaluru)">
+    <button onclick="analyzeWeather()">Analyze</button>
+  </div>
+
+  <!-- CURRENT WEATHER -->
+  <h3 class="section-title">📍 Current Weather</h3>
+  <div id="cards" class="metrics"></div>
+
+  <!-- NEXT 24 HOURS -->
+  <h3 class="section-title">⏳ Next 24 Hours Prediction</h3>
+  <div id="next24" class="metrics"></div>
+
+  <!-- NEXT DAYS -->
+  <h3 class="section-title">📅 Next Days Outlook</h3>
+  <div id="daily" class="metrics"></div>
+
+  <!-- MAP -->
+  <h3 class="section-title">🌍 Spatial Overview</h3>
+  <div id="map"></div>
+
+  <!-- LINK -->
+  <a id="vizBtn" class="viz-btn" style="display:none">
+    View Detailed Forecast Analytics →
+  </a>
+
+</div>
+
+<!-- ================= SCRIPT ================= -->
+<script>
+let map, heatLayer, cityMarker;
+
+/* ---------- Animated Counter (with units) ---------- */
+function animateCounter(element, target) {
+  const unit = element.dataset.unit || "";
+  let start = 0;
+  const duration = 800;
+  const stepTime = 20;
+  const increment = target / (duration / stepTime);
+
+  const timer = setInterval(() => {
+    start += increment;
+    if (start >= target) {
+      element.innerText = `${target}${unit}`;
+      clearInterval(timer);
+    } else {
+      element.innerText = `${start.toFixed(1)}${unit}`;
+    }
+  }, stepTime);
+}
+
+/* ---------- MAIN FUNCTION ---------- */
+function analyzeWeather() {
+  const city = document.getElementById("cityInput").value.trim();
+  if (!city) return;
+
+  fetch(`/api/live-weather?city=${city}`)
+    .then(res => res.json())
+    .then(data => {
+
+      if (data.error) {
+        alert(data.error);
+        return;
+      }
+
+      /* ===== TEMPERATURE TREND ===== */
+      const currentTemp = data.current.temp;
+      const nextTemp = data.next_24h[0]?.temp ?? currentTemp;
+
+      let trendArrow = "→";
+      let trendClass = "stable";
+
+      if (nextTemp > currentTemp) {
+        trendArrow = "↑";
+        trendClass = "up";
+      } else if (nextTemp < currentTemp) {
+        trendArrow = "↓";
+        trendClass = "down";
+      }
+
+      /* ===== CURRENT WEATHER ===== */
+      document.getElementById("cards").innerHTML = `
+        <div class="metric">
+          <small>🌡️ Temperature</small>
+          <span data-val="${currentTemp}" data-unit="°C">0</span>
+          <div class="trend ${trendClass}">${trendArrow}</div>
+        </div>
+
+        <div class="metric">
+          <small>🤗 Feels Like</small>
+          <span data-val="${data.current.feels_like}" data-unit="°C">0</span>
+        </div>
+
+        <div class="metric">
+          <small>💧 Humidity</small>
+          <span data-val="${data.current.humidity}" data-unit="%">0</span>
+        </div>
+
+        <div class="metric">
+          <small>🌬️ Pressure</small>
+          <span data-val="${data.current.pressure}" data-unit=" hPa">0</span>
+        </div>
+
+        <div class="metric weather-icon-card">
+          <small>🌤️ Condition</small>
+          <img src="https://openweathermap.org/img/wn/${data.current.icon}@2x.png" alt="Weather icon">
+          <span class="condition-text">${data.current.condition}</span>
+        </div>
+      `;
+
+      document.querySelectorAll("#cards [data-val]").forEach(el =>
+        animateCounter(el, parseFloat(el.dataset.val))
+      );
+
+      /* ===== NEXT 24 HOURS ===== */
+      document.getElementById("next24").innerHTML =
+        data.next_24h.map(item => `
+          <div class="metric">
+            <small>${item.time.split(" ")[1]}</small>
+            <span data-val="${item.temp}" data-unit="°C">0</span>
+          </div>
+        `).join("");
+
+      document.querySelectorAll("#next24 [data-val]").forEach(el =>
+        animateCounter(el, parseFloat(el.dataset.val))
+      );
+
+      /* ===== NEXT DAYS ===== */
+      document.getElementById("daily").innerHTML =
+        Object.entries(data.daily_avg).map(([day, temp]) => `
+          <div class="metric">
+            <small>${day}</small>
+            <span data-val="${temp}" data-unit="°C">0</span>
+          </div>
+        `).join("");
+
+      document.querySelectorAll("#daily [data-val]").forEach(el =>
+        animateCounter(el, parseFloat(el.dataset.val))
+      );
+
+      /* ===== MAP ===== */
+      const lat = data.coordinates.lat;
+      const lon = data.coordinates.lon;
+
+      if (!map) {
+        map = L.map("map").setView([lat, lon], 9);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap"
+        }).addTo(map);
+      } else {
+        map.setView([lat, lon], 9);
+      }
+
+      if (cityMarker) map.removeLayer(cityMarker);
+      cityMarker = L.marker([lat, lon])
+        .addTo(map)
+        .bindPopup(`<b>${data.city}</b>`)
+        .openPopup();
+
+      /* ===== HEATMAP ===== */
+      fetch("/api/heatmap")
+        .then(res => res.json())
+        .then(points => {
+          if (heatLayer) map.removeLayer(heatLayer);
+          heatLayer = L.heatLayer(points, {
+            radius: 35,
+            blur: 20,
+            gradient: {0.3: "blue", 0.6: "orange", 1: "red"}
+          }).addTo(map);
+        });
+
+      /* ===== LINK ===== */
+      const vizBtn = document.getElementById("vizBtn");
+      vizBtn.style.display = "inline-block";
+      vizBtn.href = `/visualization?city=${data.city}`;
+    });
+}
+
+/* ---------- DARK MODE ---------- */
+function toggleDark() {
+  document.body.classList.toggle("dark");
+  localStorage.setItem("dark", document.body.classList.contains("dark"));
+}
+
+if (localStorage.getItem("dark") === "true") {
+  document.body.classList.add("dark");
+}
+</script>
+
+</body>
+</html>
